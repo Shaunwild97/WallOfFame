@@ -1,5 +1,26 @@
 const Discord = require('discord.js')
 const fs = require('fs')
+const winston = require('winston')
+const MESSAGE = Symbol.for('message')
+const DateFormat = require('date.format')
+
+const jsonFormatter = (logEntry) => {
+    const base = {"@timestamp": new Date()}
+    const json = Object.assign(base, logEntry)
+    logEntry[MESSAGE] = JSON.stringify(json)
+    return logEntry
+}
+
+const log = winston.createLogger({
+    level: 'info',
+    format: winston.format(jsonFormatter)(),
+    transports: [
+        new winston.transports.File({
+            filename: 'log.log',
+            timestamp: true
+        })
+    ]
+})
 
 const client = new Discord.Client()
 const config = JSON.parse(fs.readFileSync('./config.json'))
@@ -11,32 +32,41 @@ global.botClient = client
 const STAR_EMOJI = '\u2B50'
 const NO_MOUTH_EMOJI = '😶'
 const UPVOTE_EMOJI = '🔼'
-const DOWNVOTE_EMOJI = '🔽';
+const DOWNVOTE_EMOJI = '🔽'
+
 class WOFBotDJS {
 
     initialize() {
-        client.on('ready', () => {
-            console.log('I am ready!')
-            this.updateAllServers()
-        });
+        try {
+            client.login(fs.readFileSync('./login.key', 'utf-8'))
 
-        client.on('guildCreate', guild => {
-            this.registerServer(guild)
-        })
+            client.on('ready', () => {
+                log.info("Connected to discord")
+                this.updateAllServers()
 
-        client.on('guildDelete', guild => {
-            this.serverRemoved(guild)
-        })
+                setInterval(() => this.updateAllServers, 5 * 1000)
+            })
 
-        client.on('message', message => {
-            this.handleMessage(message)
-        });
+            client.on('guildCreate', guild => {
+                log.info("Joined new server: " + guild.name)
+                this.registerServer(guild)
+            })
 
-        client.on('messageReactionAdd', message => {
-            this.handleReaction(message)
-        })
+            client.on('guildDelete', guild => {
+                log.info("Removed from server: " + guild.name)
+                this.serverRemoved(guild)
+            })
 
-        client.login(fs.readFileSync('./login.key', 'utf-8'))
+            client.on('message', message => {
+                this.handleMessage(message)
+            })
+
+            client.on('messageReactionAdd', message => {
+                this.handleReaction(message)
+            })
+        } catch (ex) {
+            log.error('The application had a fatal error', ex)
+        }
     }
 
     registerServer(server) {
@@ -54,7 +84,7 @@ class WOFBotDJS {
         config[server.id] =
                 {
                     wall_content: [],
-                    prefix: "-",
+                    prefix: '-',
                     react_threshold: 5,
                     react_emoji: STAR_EMOJI,
                     global_subscribe: true
@@ -63,7 +93,7 @@ class WOFBotDJS {
         this.updateWallOnServer(server)
 
         this.saveConfigFile()
-        this.sendGreeting(server);
+        this.sendGreeting(server)
     }
 
     handleMessage(message) {
@@ -84,6 +114,7 @@ class WOFBotDJS {
                 const command = args[0]
                 args = args.splice(1, args.length)
 
+                log.info("User issed command: " + command)
 
                 switch (command) {
                     case 'help':
@@ -94,7 +125,7 @@ class WOFBotDJS {
 
                         if (args.length == 0) {
                             message.react(NO_MOUTH_EMOJI)
-                            channel.send("^ Your prefix can be seen here...")
+                            channel.send('^ Your prefix can be seen here...')
                             break
                         }
 
@@ -104,18 +135,21 @@ class WOFBotDJS {
                         } else {
                             channel.send(`Prefix can only be one character. e.g. **${prefix}**`)
                         }
+
                         break
                     case 'threshold':
-                        const newThreshold = args[0];
+                        const newThreshold = args[0]
 
                         if (newThreshold > 1 && newThreshold < 50) {
                             this.updateThreshold(server, newThreshold)
                             channel.send(`Updated server threshold to: **${newThreshold}**`)
+                        }else{
+                            channel.send('New threshold must be within the range 1-50')
                         }
                 }
             }
         } catch (ex) {
-            console.error(ex)
+            log.error('There was an error parsing a command', ex)
             channel.send(`There was an error with your syntax. Try **${prefix}help**`)
         }
     }
@@ -136,7 +170,7 @@ class WOFBotDJS {
             const emoji = serverConfig.react_emoji
 
             if (react.count == threshold && react.emoji.name === emoji) {
-                this.saveAndAddToWall(message, server);
+                this.saveAndAddToWall(message, server)
             }
         }
     }
@@ -167,13 +201,11 @@ class WOFBotDJS {
     addToWall(server, message) {
         this.checkAndCreateChannel(server)
                 .then(wallOfFame => {
-                    wallOfFame.send(`*"${message.message}"* \n@${message.author}  ${UPVOTE_EMOJI} ${message.upvotes} ${DOWNVOTE_EMOJI} ${message.downvotes} from ${message.server_name}`)
-                            .then(msg => {
-                                msg.react(UPVOTE_EMOJI)
-                                        .then(r => msg.react(DOWNVOTE_EMOJI))
-
-                            })
-                })
+                    const embed = new Discord.RichEmbed()
+                    embed.addField(message.author, message.message)
+                    embed.setFooter(`⬆️ ${message.upvotes} ⬇️ ${message.downvotes} (${new Date(message.timestamp).format("hh:MM dd/mm/yy")})`)
+                    return wallOfFame.send(embed)
+                }).catch(log.error)
     }
 
     updateAllServers() {
@@ -185,21 +217,21 @@ class WOFBotDJS {
     updateWallOnServer(server) {
         this.checkAndCreateChannel(server)
                 .then(wallOfFame => {
-                    wallOfFame.clone().then(newWall => {
-                        wallOfFame.delete().then(() => {
-                            newWall.send("**This is the Wall of Fame! This is where all of my wall of fame nominations will be posted.**")
+                    wallOfFame.clone()
+                        .then(newWall => {
+                            wallOfFame.delete().then(() => {
+                                newWall.send('**This is the Wall of Fame! This is where all of my wall of fame nominations will be posted.**')
 
-                            for (let message of global_wall) {
-                                this.addToWall(server, message)
-                            }
-                        })
-                    })
+                                for (let message of global_wall) {
+                                    this.addToWall(server, message)
+                                }
+                        }).catch(log.error)
+                    }).catch(log.error)
                 })
     }
 
     sendGreeting(server) {
         const channel = this.findSuitableReportingChannel(server)
-        console.log("sending to " + channel.id)
         channel.send(`Hello! Thanks for inviting me to your server. I shall do my setup and we'll be ready to go! My prefix is ${config[server.id].prefix}`)
     }
 
@@ -217,16 +249,21 @@ class WOFBotDJS {
     }
 
     checkAndCreateChannel(server) {
-        return new Promise(resolve => {
+        return new Promise((resolve, error) => {
             const wallOfFame = this.getWallOfFame(server)
+
 
             if (!wallOfFame) {
                 server.createChannel('wall_of_fame')
                         .then(channel => {
-                            channel.send("**This is the Wall of Fame! This is where all of my wall of fame nominations will be posted.**")
+                            channel.send('**This is the Wall of Fame! This is where all of my wall of fame nominations will be posted.**')
                             return resolve(channel)
                         })
-                        .catch(err => this.reportError(server, 'create wall_of_fame channel', err))
+                        .catch(err => {
+                            this.reportError(server, 'create wall_of_fame channel', err)
+                            log.error(err)
+                            return error()
+                        })
             }
 
             return resolve(wallOfFame)
@@ -268,14 +305,13 @@ class WOFBotDJS {
         }
     }
 
-    showHelp(channel)
-    {
-        const helpMessage = '```Commands: \n\thelp - Displays this message\n\tprefix <prefix> - changes the prefix to whatever specified\n\tthreshold <threshold> - Updates the servers react threshold (the number of reacts to a message before its added to the wall)```';
+    showHelp(channel) {
+        const helpMessage = '```Commands: \n\thelp - Displays this message\n\tprefix <prefix> - changes the prefix to whatever specified\n\tthreshold <threshold> - Updates the servers react threshold (the number of reacts to a message before its added to the wall)```'
         channel.send(helpMessage)
     }
 
     reportError(server, about, error) {
-        const channel = this.findSuitableReportingChannel(server);
+        const channel = this.findSuitableReportingChannel(server)
         channel.send(`${CODE_MARKUP} There was an error trying to ${about}\n${error.response.message} ${CODE_MARKUP}`)
     }
 }

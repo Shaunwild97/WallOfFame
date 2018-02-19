@@ -1,4 +1,4 @@
-const WOFWebPortal = require('./app/WOFWebPortal')
+require('./app/WOFWebPortal')
 const WOFBotDJS = require('./app/WOFBotDJS')
 
 const wofBot = new WOFBotDJS()
